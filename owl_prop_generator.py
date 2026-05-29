@@ -113,19 +113,18 @@ PROFILES = {'SINUSOIDAL': serr_sine, 'TRIANGLE': serr_triangle, 'SAWTOOTH': serr
 def section_world_verts(r, chord, pitch_angle, az,
                         upper, lower,
                         serr_amp, serr_fn, serr_width,
-                        t_span, n_teeth):
+                        t_serr, n_teeth):
     """
     Compute the world-space vertices for one airfoil cross-section.
 
-    The section sits at radius r along the blade's radial axis.
-    pitch_angle rotates the section around the radial axis (blade twist).
-    az rotates the whole blade around Z (for multi-blade placement).
+    t_serr is the span position remapped so 0 = start of serration zone,
+    ensuring the first tooth always begins cleanly at zero amplitude.
 
     Returns list of (x,y,z).
     """
     loop = upper + lower[-2:0:-1]   # full closed profile, 2*n_pts-2 points
     LE_FRAC   = 0.25                # front 25 % of chord receives serrations
-    span_phase = t_span * n_teeth
+    span_phase = t_serr * n_teeth
 
     # Radial axis direction (blade points outward at angle az in XY plane)
     rad_x = math.cos(az)
@@ -242,11 +241,15 @@ def build_propeller(pg):
                 serr_amp = 0.0
 
             # Full-radius airfoil section verts
+            # t_serr: remap span so phase=0 at the first serrated section,
+            # preventing the inboard tooth from being clipped mid-cycle.
+            t_serr_start = N_BLEND / n_sec
+            t_serr = max(0.0, (t_span - t_serr_start) / max(1.0 - t_serr_start, 1e-6))
             ring = section_world_verts(
                 r, chord, pitch_angle, az,
                 upper, lower,
                 serr_amp, s_fn, s_width,
-                t_span, s_count
+                t_serr, s_count
             )
 
             # ── Hub intersection ──────────────────────────────────────────
