@@ -113,29 +113,26 @@ PROFILES = {'SINUSOIDAL': serr_sine, 'TRIANGLE': serr_triangle, 'SAWTOOTH': serr
 def section_world_verts(r, chord, pitch_angle, az,
                         upper, lower,
                         serr_amp, serr_fn, serr_width,
-                        t_serr, n_teeth):
+                        t_serr, n_teeth,
+                        te_serr_on=False):
     """
     Compute the world-space vertices for one airfoil cross-section.
 
-    t_serr is the span position remapped so 0 = start of serration zone,
-    ensuring the first tooth always begins cleanly at zero amplitude.
+    t_serr      – span position remapped so 0 = start of serration zone.
+    te_serr_on  – if True, apply matching serrations to the trailing edge too.
+                  TE teeth are in phase with LE teeth (same span_phase).
 
     Returns list of (x,y,z).
     """
     loop = upper + lower[-2:0:-1]   # full closed profile, 2*n_pts-2 points
-    LE_FRAC   = 0.25                # front 25 % of chord receives serrations
+    LE_FRAC = 0.25   # front 25 % of chord gets LE serrations
+    TE_FRAC = 0.25   # rear  25 % of chord gets TE serrations
     span_phase = t_serr * n_teeth
 
-    # Radial axis direction (blade points outward at angle az in XY plane)
     rad_x = math.cos(az)
     rad_y = math.sin(az)
 
-    # Chord direction (tangential, rotated by pitch_angle around radial axis)
-    # In the section's local frame:  chord → tangential, thickness → axial (Z)
-    # After pitch rotation around the radial axis:
-    #   chord_world  =  (-sin(az), cos(az), 0) * cos(pa)  +  (0,0,1) * (-sin(pa))
-    #   thick_world  =  (-sin(az), cos(az), 0) * sin(pa)  +  (0,0,1) * ( cos(pa))
-    tan_x = -math.sin(az);  tan_y = math.cos(az)   # tangential unit vector
+    tan_x = -math.sin(az);  tan_y = math.cos(az)
 
     chord_wx = tan_x * math.cos(pitch_angle)
     chord_wy = tan_y * math.cos(pitch_angle)
@@ -145,19 +142,24 @@ def section_world_verts(r, chord, pitch_angle, az,
     thick_wy = tan_y * math.sin(pitch_angle)
     thick_wz =         math.cos(pitch_angle)
 
+    tooth = serr_fn(span_phase, serr_width) * serr_amp if serr_amp > 0 else 0.0
+
     verts = []
     for (xn, yn) in loop:
-        # Local chord-space: origin at quarter-chord, x along chord, y = thickness
         xc = (xn - 0.25) * chord
         yc = yn * chord
 
-        # Serration on leading-edge region
+        # Leading-edge serration: push LE points forward (-xc direction)
         if serr_amp > 0 and xn < LE_FRAC:
             blend_c = 1.0 - xn / LE_FRAC
-            tooth   = serr_fn(span_phase, serr_width) * serr_amp
-            xc     -= tooth * blend_c
+            xc -= tooth * blend_c
 
-        # World position = section centre + chord displacement + thickness displacement
+        # Trailing-edge serration: push TE points backward (+xc direction),
+        # same amplitude and phase as LE so they visually match.
+        if te_serr_on and serr_amp > 0 and xn > (1.0 - TE_FRAC):
+            blend_c = (xn - (1.0 - TE_FRAC)) / TE_FRAC   # 0 at blend start, 1 at TE
+            xc += tooth * blend_c
+
         wx = rad_x * r  +  chord_wx * xc  +  thick_wx * yc
         wy = rad_y * r  +  chord_wy * xc  +  thick_wy * yc
         wz =               chord_wz * xc  +  thick_wz * yc
@@ -199,7 +201,8 @@ def build_propeller(pg):
     chord_tip   = pg.chord_tip
     num_blades  = pg.num_blades
 
-    serr_on  = pg.serr_enabled
+    serr_on    = pg.serr_enabled
+    te_serr_on = pg.te_serr_enabled
     s_count  = pg.tooth_count
     s_depth  = pg.tooth_depth
     s_width  = pg.tooth_width
@@ -249,7 +252,8 @@ def build_propeller(pg):
                 r, chord, pitch_angle, az,
                 upper, lower,
                 serr_amp, s_fn, s_width,
-                t_serr, s_count
+                t_serr, s_count,
+                te_serr_on=te_serr_on
             )
 
             # ── Hub intersection ──────────────────────────────────────────
@@ -371,6 +375,7 @@ class PROP_PG_Settings(PropertyGroup):
     airfoil_pts: IntProperty  (name="Airfoil Points",    default=36,    min=8,    max=80,              update=_upd)
     # Serrations
     serr_enabled: BoolProperty(name="Enable Serrations", default=True,                               update=_upd)
+    te_serr_enabled: BoolProperty(name="Trailing Edge Serrations", default=False, update=_upd)
     tooth_count:  IntProperty  (name="Tooth Count",      default=12,    min=2,    max=60,              update=_upd)
     tooth_depth:  FloatProperty(name="Tooth Depth (mm)", default=3.0,   min=0.1,  max=20,   step=10, precision=2, update=_upd)
     tooth_width:  FloatProperty(name="Valley Width",     default=0.35,  min=0.05, max=0.85, step=1,  precision=2, update=_upd)
@@ -467,6 +472,7 @@ class PROP_PT_Panel(Panel):
         sub.prop(pg, "tooth_count")
         sub.prop(pg, "tooth_depth")
         sub.prop(pg, "tooth_width", slider=True)
+        sub.prop(pg, "te_serr_enabled")
         sub.separator()
         sub.prop(pg, "taper_enabled")
         r2 = sub.row(); r2.active = pg.taper_enabled
